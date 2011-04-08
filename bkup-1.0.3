@@ -1,0 +1,274 @@
+#! /usr/bin/perl
+# v. 1.0.3
+# Date 2009/12/16
+# Author: Ian Strascina
+
+use Date::Format;
+
+${size} = @ARGV;
+${VERSION} = "1.0.3";
+
+
+sub usage {
+  print "\nbkup\tv${VERSION}\n";
+  print "Backup a file to another file whose name contains a backup ";
+  print "reference string\n";
+  print "\nUsage: bkup [OPTIONS]... FILE1 [FILE2]...\n\nOptions:\n";
+  print "    -d=DIR, --directory=DIR\tWrite files to specified directory - \n";
+  print "\t\t\t\tDefault is ./\n";
+  print "    -e, --end\t\t\tAppend Separator and Reference String at\n";
+  print "\t\t\t\tthe end of the filename\n";
+  print "    -h, --help\t\t\tPrint this help, then exit\n";
+  print "    -n, --nosep\t\t\tDo not use a Separator\n";
+  print "    -r=STRING, --ref=STRING\tBacked-up files will have STRING as its\n";
+  print "\t\t\t\tReference string - Default is 'BACKUP'\n";
+  print "    -R, --recursive\t\tProceed recursively through any directories\n";
+  print "\t\t\t\tspecified\n";
+  print "    -s=TEXT, --separator=TEXT\tUse TEXT as the Separator between the\n";
+  print "\t\t\t\tfile name and Reference String\n";
+  print "    -u[=FMT], --usedate[=FMT]\tUse the current date (with optional format\n";
+  print "\t\t\t\tFMT) as the Reference String - FMT follows\n";
+  print "\t\t\t\tthe Perl Date::Format formatting string;\n";
+  print "\t\t\t\tDefault is \%Y\%d\%m (YYYYMMDD)\n";
+  print "    -v, --version\t\tPrint the version number and exit\n\n";
+  print "Examples:\n";
+  print "    bkup junk.txt\t\tCopies junk.txt to junk_BACKUP.txt\n";
+  print "    bkup -e junk.txt\t\tCopies junk.txt to junk.txt_BACKUP\n";
+  print "    bkup -r=OLD junk.txt\tCopies junk.txt to junk_OLD.txt\n";
+  print "    bkup -d=../ junk.txt\tCopies junk.txt to junk_BACKUP.txt\n";
+  print "\t\t\t\tin parent directory\n";
+  print "    bkup -s=# junk.txt\t\tCopies junk.txt to junk#BACKUP.txt\n";
+  print "\nNotes:\n    - Directories may be specified as well as FILEs\n";
+  print "    - Separator is inserted before Reference String\n";
+  print "    - If both -n and -s (--nosep and --separator) are specified, the\n";
+  print "      separator will take precedence\n";
+  print "    - If both -r and -u (--ref and --usedate) are specified, the\n";
+  print "      reference string specified by -r will take precedence\n";
+  print "    - Certain characters are disallowed in filenames on different OSes,\n";
+  print "      so be cautious of text supplied for Separators and Reference Strings\n";
+  print "    - The Separator and Reference String will be inserted at the end of the\n";
+  print "      filename prefix (before the first extension) by default.  If -e or\n";
+  print "      --end is specified, they will be inserted at the end of the last\n";
+  print "      extension (Files beginning with '.' and/or those that have no\n";
+  print "      extension will have it inserted at the end)\n";
+  print "    - Warning: If FILE originally had an extenion, specifying -e or --end\n";
+  print "      will CHANGE THE FILE EXTENSION!\n";
+  print "    - Warning: Certain formats of the Perl Date::Format will output spaces,\n";
+  print "      (e.g. \%c, \%r, etc.) so they will not work for bkup.\n";
+  print "    - If a directory specified with -d is non-existant, bkup will ";
+  print "attempt\n      to create it\n";
+  print "    - By default, directories are skipped.  If either -R or ";
+  print "--recursive is\n      specified, for all directories specified, ";
+  print "the entire subtree of the\n      file system (rooted at that ";
+  print "directory) will be backed up.  Thus,\n      either zero or all ";
+  print "sublevels of a directory may be backed up.\n\n";
+  print "      For example, if (and only if) the directory junk/ contains ";
+  print "any\n      subdirectories, the following will produce distinct ";
+  print "effects:\n\n      bkup -R -d=some_dir/ junk/\tBackup all sublevels ";
+  print "of junk/\n\t\t\t\t\tto some_dir/junk/\n";
+  print "      bkup -R -d=some_dir/ junk/*\tBackup all sublevels of junk/\n";
+  print "\t\t\t\t\tto some_dir/\n";
+  print "      bkup -d=some_dir/ junk/\*\t\tBackup only files in junk/\n";
+	  print "\t\t\t\t\tto some_dir/\n";
+  print "      bkup -d=some_dir/ junk/\t\tNothing happens; junk/ is skipped\n\n";
+  exit;
+}
+
+
+if (${size} == 0) {
+  print "bkup: No input file(s) specified.  Try `bkup --help' for more " .
+    "information\n";
+  exit;
+}
+
+
+@{files} = ();
+${r_str} = "BACKUP";
+${dir} = "./";
+${rec} = 0;  # false
+${rec_command} = '';
+${new_ex} = "";
+${end} = 0;  #false
+${separator} = "_";
+${can_override_separator} = 1; #true
+${can_date_override} = 1; #true
+${date_format} = "%Y%m%d";
+${using_n} = 0;
+${using_u} = 0;
+
+foreach ${par} (@ARGV) {
+  # switch (${par})
+  {
+    if ( (${par} =~ /^-h$/) || (${par} =~ /^--help$/)) {  # help; -h
+      usage;
+    }
+    if ( (${par} =~ /^-r=((.)+)/) || (${par} =~ /^--ref=((.)+)/)){  # change substring; -r
+      ${r_str} = ${1};
+      ${can_date_override} = 0;
+      last;
+    }
+    if ( (${par} =~ /^-u(=(.+))?$/) || (${par} =~ /^--usedate(=(.+))?$/)){  # date substring; -u
+      if (${can_date_override} == 1) {
+        if (${2} =~ /(.+)/) {
+          ${date_format} = ${1};
+        }
+        ${r_str} = time2str(${date_format}, time);
+        ${using_u} = 1;
+      }
+      last;
+    }
+    if ( (${par} =~ /^-d=((.)+)/) || (${par} =~ /^--directory=((.)+)/)) {  # output directory; -d
+      ${dir} = ${1};
+      if (!(${dir} =~ /([^\/]*)(\/)$/)) { # doesn't end in a '/'
+	${dir} = ${dir} . "/";
+      }
+      if (! -d ${dir}) {
+		system("mkdir ${dir}");
+		${lst} = `echo $?`;
+		if (${lst} != 0) {
+	  	  print "Cannot create directory ${dir}\n";
+	  	exit;
+		}
+      }
+      elsif (! -w ${dir}) {
+		print "Director ${dir} is not writable\n";
+		exit;
+      }
+      last;
+    }
+    if ( (${par} =~ /^-s=((.)+)/) || (${par} =~ /^--separator=((.)+)/) ) { # change separator; -s
+      ${separator} = ${1};
+      ${can_override_separator} = 0;
+      last;
+    }
+    if ( (${par} =~ /^-n$/) || (${par} =~ /^--nosep$/)) {  # no separator; -n
+      if (${can_override_separator} == 1) { # separator not set
+        ${separator} = '';
+        ${using_n} = 1;
+      }
+      last;
+    }
+    if ( (${par} =~ /^-R$/) || (${par} =~ /^--recursive$/)) {  # recursive; -R
+      ${rec} = 1;
+      last;
+    }
+    if ( (${par} =~ /^-e$/) || (${par} =~ /^--end$/)) {  # append to end of file name; -e
+      ${end} = 1;
+      last;
+    }
+	if ( (${par} =~ /^-v$/) || (${par} =~ /^--version$/)) {  # print version number; -v
+	  print "bkup version ${VERSION}\n";
+	  exit;
+	}
+    if (${par} =~ /^(--?)([^=]*)(=(.)*)?/) { # exit for unknown option
+      print "Unknown option: ${1}${2}${3}\n";
+      exit;
+    }
+
+    if (${par} =~ /(.+)\/$/) {
+      ${par} = ${1};
+    }
+    (@{files}) = ((@{files}),(${par}));
+
+  } # end switch
+}
+
+${rep_str} = ${separator} . ${r_str};
+
+
+foreach ${file} (@{files}) {
+
+  if (-f ${file}) {
+    if (${file} =~ /.*\/(.+)/) {  # strip off old path
+      ${new_file} = ${1};
+    }
+    else {
+      ${new_file} = ${file};
+    }
+
+    if (${new_file} =~ /^\.(.+)/) {  # file starts with '.'
+	${new_file} = "." . ${1} . ${rep_str};
+    }
+    # one or more file extensions
+    #elsif (${new_file} =~ /([^\.]*)\.([^\.]+)/) {
+    elsif (${new_file} =~ /([^\.]*)\.(.+)/) {  # filename '.' allextensions
+      if (!${end}) {  # put separator and reference string before extension
+	${new_file} = ${1} . ${rep_str} . "." . ${2};
+      }
+      else { # put separator and reference string at end of extensions
+	${new_file} = ${1} . "." . ${2} . ${rep_str}
+      }
+    }
+    else {  # no file extension -- put at end
+      ${new_file} = ${new_file} . ${rep_str};
+    }
+    if (${dir} ne "./") {  # not './' (current dir)
+      ${new_file} = ${dir} . ${new_file};
+    }
+
+    `cp ${file} ${new_file}`;
+    print "Copied ${file} to ${new_file}\n";
+  }
+
+  elsif (-d ${file}) {  # ${file} is a directory
+    if (!${rec}) {  # recursive flag not set
+      if (${file} =~ /.*\/$/) {  # directory name ends in a '/'
+	print "Skipping directory ${file}\n";
+      }
+      else {
+	print "Skipping directory ${file}/\n";
+      }
+    }
+    else {  # recursive flag *is* set
+      if (${file} =~ /^(.+\/)(.+)(\/?)$/) {
+	if (${dir} eq "./") {  # strip './' from directory
+	  ${dest_dir} = ${2};
+	}
+	else {
+	  ${dest_dir} = ${dir} . ${2};
+	}
+	${new_dir}  = ${1} . ${2};
+      }
+      elsif (${file} =~ /^(.+)(\/?)$/) {
+	if (${dir} eq "./") {  # strip './' from directory
+	  ${dest_dir} = ${1};
+	}
+	else {
+	  ${dest_dir} = ${dir} . ${1};
+	}
+	${new_dir} = ${1};
+
+      }
+      if (${new_dir} =~ /(.*)\/$/) {
+	${new_dir} = ${1};
+      }
+
+      ${rec_command} = "bkup -R";
+      if (${end} == 1) {
+        ${rec_command} = "${rec_command} -e";
+      }
+
+      if (${using_n} == 1) {
+        ${rec_command} = "${rec_command} -n";
+      }
+      else {
+        ${rec_command} = "${rec_command} -s=${separator}";
+      }
+
+	  if (${using_u} == 1) {
+	    ${rec_command} = "${rec_command} -u=${date_format}";
+	  }
+	  else {
+	    ${rec_command} = "${rec_command} -r=${r_str}";
+	  }
+	  ${rec_command} = "${rec_command} -d=${dest_dir} ${new_dir}/*";
+
+      system(${rec_command});
+
+    }
+  }
+  else {
+    print "File not found: ${file}\n";
+  }
+
+}
